@@ -1,0 +1,11 @@
+SSR:
+  name: "&#d9afd9[SSR] {Player_name}"
+  lore:
+    - "第一行"
+    - "第二行"
+
+R:
+  name: "&#a1cfff[R] {Player_name}"
+  lore:
+    - "第一行"
+    - "第二行"

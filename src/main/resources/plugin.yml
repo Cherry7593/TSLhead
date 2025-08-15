@@ -1,0 +1,18 @@
+name: TSLhead
+version: '1.0'
+main: com.zvbj.TSL_head.TSL_Head
+api-version: '1.21'
+authors: [ Zvbj ]
+description: TSL服务器の插件 - 支持在线/离线玩家头颅获取
+folia-supported: true
+commands:
+  TSLhead:
+    description: 获取玩家头颅（支持离线玩家）
+    aliases: [thead]
+    usage: /<command> reload OR /<command> <命名> <玩家名> [接收玩家]
+    permission: tslhead.use
+
+permissions:
+  tslhead.use:
+    description: 允许使用 TSLhead 命令
+    default: op
