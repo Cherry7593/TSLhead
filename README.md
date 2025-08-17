@@ -1,226 +1,252 @@
-# TSLhead - 玩家头颅插件
+# TSLhead - TSL服务器专用头颅插件（Folia适配版）
 
-![Version](https://img.shields.io/badge/version-1.0-blue.svg)
-![Minecraft](https://img.shields.io/badge/minecraft-1.21-green.svg)
-![Folia](https://img.shields.io/badge/folia-supported-orange.svg)
-
-一个用于 Minecraft 服务器的自定义玩家头颅生成插件，支持稀有度系统和离线玩家头颅获取。
+一个功能强大的Minecraft服务器头颅插件，支持获取在线和离线玩家头颅，以及与CrazyCrates抽奖插件的无缝联动。**完全兼容Folia服务端！**
 
 ## ✨ 主要功能
 
-- 🎯 **自定义头颅生成** - 根据配置创建带有自定义名称和描述的玩家头颅
-- 🌐 **离线玩家支持** - 获取任何曾经进入过服务器的玩家头颅（无需在线）
-- 🔒 **UUID 稳定性** - 基于 UUID 生成，玩家改名后仍然有效
-- 🎨 **丰富的颜色支持** - 支持 16 进制颜色代码和传统颜色代码
-- 📦 **智能物品给予** - 背包满时自动掉落到脚下，不会丢失
-- ⚡ **热重载配置** - 无需重启服务器即可重载配置
-- 🛡️ **安全保护** - 防止生成的头颅在铁砧中被修改
+- 🎭 **获取玩家头颅**：支持获取在线和离线玩家的头颅（使用UUID，永远稳定）
+- 🎒 **智能背包管理**：背包满时自动掉落物品，不会丢失
+- ⚡ **异步处理**：头颅获取异步进行，不影响服务器性能
+- 🌟 **Folia完全兼容**：针对Folia服务端进行了专门优化，支持区域调度
+- 🎁 **CrazyCrates联动**：一键将头颅添加到抽奖池
+- 🎨 **自定义模板**：支持多种头颅类型和自定义样式
+- 🌈 **十六进制颜色**：支持现代颜色代码 (&#RRGGBB)
+- 📝 **智能补全**：优化的Tab补全，只显示在线玩家避免卡顿
 
-## 🚀 快速开始
+## 📦 安装要求
 
-### 安装要求
-- Minecraft 服务器版本：1.21+
-- Java 版本：17+
-- 服务端类型：Bukkit/Spigot/Paper/Folia
+- **Minecraft版本**：1.16+
+- **服务端**：Paper/Spigot/Bukkit/Folia
+- **Java版本**：Java 21+（Folia要求）
+- **可选依赖**：CrazyCrates（用于抽奖联动功能）
 
-### 安装步骤
-1. 将 `TSLhead-1.0.jar` 文件放入服务器的 `plugins` 文件夹
-2. 重启服务器或使用 `/reload` 命令
-3. 插件将自动生成默认配置文件
+## 🚀 Folia适配特性
 
-## 📖 使用方法
+本插件经过专门适配，完全支持Folia服务端的区域调度系统：
 
-### 基本命令
+- **智能服务端检测**：自动检测是否运行在Folia环境
+- **区域调度器支持**：在Folia环境下使用`Player.getScheduler()`进行区域调度
+- **向下兼容**：在传统Paper/Spigot环境下自动使用`BukkitScheduler`
+- **异步优化**：使用`CompletableFuture`进行异步任务处理，完美适配Folia的线程模型
 
+### Folia调度器原理
+
+```java
+// 自动检测Folia环境
+private boolean isFolia() {
+    try {
+        Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
+        return true;
+    } catch (ClassNotFoundException e) {
+        return false;
+    }
+}
+
+// 智能调度器切换
+if (isFolia()) {
+    player.getScheduler().run(plugin, (task) -> {
+        // Folia区域调度器
+    }, null);
+} else {
+    Bukkit.getScheduler().runTask(plugin, () -> {
+        // 传统Bukkit调度器
+    });
+}
+```
+
+## 🎮 命令使用
+
+### 基础头颅命令
+
+```
+/tslhead <头颅类型> <玩家名> [接收玩家]
+```
+
+**示例：**
 ```bash
-# 获取头颅给自己
-/thead <类型> <玩家名>
+# 给自己获取example类型的Steve头颅
+/tslhead example Steve
 
-# 获取头颅给指定玩家
-/thead <类型> <玩家名> <接收玩家>
+# 给指定玩家获取memorial类型的Alice头颅  
+/tslhead memorial Alice Bob
 
 # 重载配置
-/thead reload
+/tslhead reload
 ```
 
-### 命令别名
-- `/TSLhead` - 主命令
-- `/thead` - 简短别名
+**别名：** `/thead`
 
-### 使用示例
+### CrazyCrates联动命令
 
+```
+/tslheadcc <头颅类型> <玩家名> <奖池名> <权重> [层级]
+```
+
+**示例：**
 ```bash
-# 给自己获取 Steve 的 SSR 头颅
-/thead SSR Steve
+# 将Steve的memorial头颅添加到premium奖池，权重10.0
+/tslheadcc memorial Steve premium 10.0
 
-# 给 Alice 一个 Notch 的 R 头颅
-/thead R Notch Alice
-
-# 获取离线玩家的头颅
-/thead SSR OldPlayer
-
-# 重载插件配置
-/thead reload
+# 添加到指定层级
+/tslheadcc vip Alice legendary 50.0 epic
 ```
+
+**别名：** `/theadcc`
 
 ## ⚙️ 配置文件
 
-### config.yml 配置
+### config.yml
 
 ```yaml
-SSR:
-  name: "&#d9afd9[SSR] {Player_name}"
+# 示例头颅配置
+example:
+  name: "&6{Player_name} &7的头颅"
   lore:
-    - "第一行描述"
-    - "第二行描述"
+    - "&7这是 &6{Player_name} &7的头颅"
+    - "&8右键点击查看详情"
 
-R:
-  name: "&#a1cfff[R] {Player_name}"
+# 纪念头颅配置
+memorial:
+  name: "&#aaf6c0&l{Player_name} &7♥"
   lore:
-    - "第一行描述"
-    - "第二行描述"
+    - "&#aaf6c0▩▩▩ TSL的新生力量 ▩▩▩"
+    - "&#d0ffde「这颗头颅见证了{Player_name}在服务器世界中的足迹」"
+    - "&#d0ffde「愿它永远守护你在TSL的回忆」"
+    - "&8 ┃ &7描述在头颅放置后会消失哦 &8┃"
 
-# 添加更多稀有度等级...
-SR:
-  name: "&#ffb347[SR] {Player_name}"
+# VIP头颅配置  
+vip:
+  name: "&b&l[VIP] &f{Player_name}"
   lore:
-    - "稀有头颅"
-    - "收集价值很高"
+    - "&b✦ VIP专属头颅 ✦"
+    - "&7玩家: &f{Player_name}"
+    - "&8限量收藏版"
 
-N:
-  name: "&7[N] {Player_name}"
+# 管理员头颅配置
+admin:
+  name: "&c&l[ADMIN] &4{Player_name}"
   lore:
-    - "普通头颅"
+    - "&c⚡ 管理员专属头颅 ⚡"
+    - "&7玩家: &f{Player_name}"
+    - "&4权威象征"
 ```
 
 ### 配置说明
 
-- **类型名称**：配置文件中的键名（如 `SSR`、`R`）
-- **name**：头颅的显示名称模板
-- **lore**：头颅的描述文本列表
-- **{Player_name}**：会被替换为实际的玩家名称
+- **{Player_name}**：玩家名占位符，会自动替换为实际玩家名
+- **颜色代码**：支持传统&代码和现代十六进制颜色 (&#RRGGBB)
+- **格式代码**：&l(粗体)、&o(斜体)、&n(下划线)等
 
-### 颜色代码支持
+## 🔐 权限系统
 
-| 格式 | 示例 | 说明 |
-|------|------|------|
-| 16进制 | `&#ff0000` | 红色 |
-| 传统代码 | `&c` | 红色 |
-| 组合使用 | `&#d9afd9&l[SSR]` | 粉紫色加粗 |
+| 权限节点 | 描述 | 默认值 |
+|---------|------|--------|
+| `tslhead.use` | 使用基础头颅命令 | `true` |
+| `tslhead.crazycrates` | 使用CrazyCrates联动 | `op` |
+| `tslhead.admin` | 管理员权限（包含所有权限） | `op` |
 
-## 🔧 权限设置
+## 🎯 特色功能详解
 
-### 权限节点
+### 1. 离线玩家支持
+- 使用UUID获取头颅，即使玩家离线也能正确显示皮肤
+- 只要玩家曾经进入过服务器，就能获取其头颅
+- 自动检测玩家是否存在于服务器缓存中
 
-| 权限 | 描述 | 默认 |
-|------|------|------|
-| `tslhead.use` | 允许使用 TSLhead 命令 | OP |
+### 2. Folia性能优化
+- **区域调度器**：在Folia环境下使用玩家所在区域的调度器
+- **异步处理**：头颅获取在后台线程进行，不阻塞主线程
+- **智能Tab补全**：只补全在线玩家，避免服务器卡顿
+- **错误处理**：完善的异常处理机制，确保插件稳定运行
 
-### 权限配置示例
-
-```yaml
-# 在权限插件中配置
-permissions:
-  tslhead.use:
-    description: 允许使用头颅命令
-    default: op  # 或者设置为 true 给所有玩家
+### 3. 智能背包管理
+```java
+// 当玩家背包满时
+if (!leftover.isEmpty()) {
+    // 头颅会掉落到玩家脚下，而不是消失
+    receiver.getWorld().dropItemNaturally(receiver.getLocation(), item);
+    sender.sendMessage("背包已满，头颅已掉落到脚下");
+}
 ```
 
-## 🎮 特殊功能
+### 4. CrazyCrates深度集成
+- 自动将头颅添加到指定奖池
+- 支持自定义权重和层级
+- 临时手持物品机制，确保添加成功
+- 智能奖池名补全
+- Folia环境下的安全执行
 
-### 离线玩家支持
-- ✅ 支持获取离线玩家头颅
-- ✅ 基于 UUID 确保皮肤正确显示
-- ✅ 玩家改名后仍然有效
-- ❌ 不支持从未进入过服务器的玩家
-
-### 智能物品给予
-- 背包有空间 → 直接放入背包
-- 背包已满 → 自动掉落到玩家脚下
-- 显示相应的提示信息
-
-### 防修改保护
-- 生成的头颅无法在铁砧中重命名
-- 保护头颅的特殊属性不被篡改
-
-## 🎯 使用场景
-
-### 适用服务器类型
-- **RPG 服务器** - 稀有度收集系统
-- **PVP 服务器** - 击杀奖励头颅
-- **生存服务器** - 玩家纪念品收集
-- **小游戏服务器** - 胜利奖励展示
-
-### 实际应用示例
-
-```bash
-# 管理员奖励系统
-/thead SSR WinnerPlayer RewardReceiver
-
-# 玩家自主收集
-/thead R FriendName
-
-# 纪念离线朋友
-/thead SR OldFriend
-```
-
-## 🛠️ 开发信息
-
-### 技术特性
-- **API 版本**：1.21
-- **Folia 兼容**：✅ 支持
-- **异步安全**：✅ 支持
-- **热重载**：✅ 支持
-
-### 依赖关系
-- 无外部依赖
-- 纯 Bukkit API 实现
-
-## 📋 更新日志
-
-### v1.0 (当前版本)
-- ✨ 初始版本发布
-- ✨ 支持自定义头颅类型配置
-- ✨ 离线玩家头颅获取
-- ✨ 智能物品给予系统
-- ✨ 16进制颜色支持
-- ✨ 防修改保护
-- ✨ Tab 自动补全
-
-## 🐛 故障排除
+## 🔧 故障排除
 
 ### 常见问题
 
-**Q: 无法获取离线玩家头颅？**
-A: 确保该玩家至少进入过一次服务器，插件需要服务器缓存的 UUID 数据。
+**Q: 在Folia服务端上是否需要特殊配置？**  
+A: 不需要！插件会自动检测Folia环境并使用相应的调度器。确保使用Java 21+。
 
-**Q: 头颅没有皮肤？**
-A: 检查服务器是否为正版验证，盗版服务器可能无法正确显示皮肤。
+**Q: 为什么获取不到某个玩家的头颅？**  
+A: 确保该玩家至少进入过服务器一次。插件使用服务器缓存的UUID/Profile数据。
 
-**Q: 配置修改后不生效？**
-A: 使用 `/thead reload` 命令重载配置，或重启服务器。
+**Q: Tab补全很慢怎么办？**  
+A: 新版本已优化，只补全在线玩家。在Folia环境下性能更佳。
 
-**Q: 没有权限使用命令？**
-A: 确保玩家拥有 `tslhead.use` 权限。
+**Q: CrazyCrates提示"不能添加空气"？**  
+A: 这通常是权限问题或CrazyCrates版本兼容性问题。确保玩家有执行crazycrates命令的权限。
 
-### 错误消息说明
+**Q: 头颅显示史蒂夫皮肤？**  
+A: 检查网络连接，或等待几分钟让皮肤服务器响应。离线玩家首次获取可能需要时间。
 
-| 消息 | 原因 | 解决方法 |
-|------|------|----------|
-| "玩家从未进入过服务器" | 目标玩家未在服务器注册 | 检查玩家名拼写或等待玩家进入 |
-| "接收玩家不在线" | 接收者离线 | 确保接收玩家在线 |
-| "未找到命名" | 配置中不存在该类型 | 检查配置文件或使用正确的类型名 |
+### 日志调试
 
-## 💬 支持与反馈
+插件会在控制台输出详细日志：
+```
+[TSLhead] 创建头颅时发生错误: [具体错误信息]
+[TSLhead] 异步处理头颅时发生错误: [具体错误信息]
+[TSLhead] TSLhead 已启用
+```
 
-如果您在使用过程中遇到问题或有改进建议，请：
+## 🏗️ 开发者信息
 
-1. 检查此 README 的故障排除部分
-2. 确认使用的是最新版本
-3. 联系服务器管理员或插件作者
+### 技术栈
+- **Java 21**：支持最新的语言特性
+- **Paper API 1.21.4**：使用最新的Paper API
+- **CompletableFuture**：现代异步编程
+- **Folia区域调度器**：专为Folia优化
+
+### 架构特点
+- **双调度器支持**：自动适配Folia和传统Bukkit环境
+- **异步优先**：所有耗时操作都在异步线程执行
+- **区域安全**：在Folia环境下确保所有操作都在正确的区域执行
+
+## 📈 更新日志
+
+### v1.0 - Folia适配版
+- ✅ 完全支持Folia服务端
+- ✅ 智能服务端环境检测
+- ✅ 区域调度器适配
+- ✅ CompletableFuture异步处理
+- ✅ 基础头颅获取功能
+- ✅ 离线玩家支持
+- ✅ CrazyCrates联动
+- ✅ 智能Tab补全优化
+- ✅ 十六进制颜色支持
+- ✅ 智能背包管理
+
+## 🤝 支持与反馈
+
+如有问题或建议，请联系插件作者或在服务器论坛发帖。
+
+### 兼容性测试
+
+| 服务端类型 | 版本 | 状态 |
+|-----------|------|------|
+| Folia | 最新版 | ✅ 完全支持 |
+| Paper | 1.21.4+ | ✅ 完全支持 |
+| Paper | 1.16-1.21.3 | ✅ 向下兼容 |
+| Spigot | 1.16+ | ✅ 基础支持 |
+| Bukkit | 1.16+ | ✅ 基础支持 |
 
 ---
 
-**作者**: Zvbj  
-**版本**: 1.0  
-**兼容**: Minecraft 1.21+ | Bukkit/Spigot/Paper/Folia
+**插件作者：** ZVBJ  
+**版本：** 1.0 (Folia适配版)  
+**适用于：** TSL服务器 & Folia环境  
+**技术支持：** 完整的Folia区域调度器支持

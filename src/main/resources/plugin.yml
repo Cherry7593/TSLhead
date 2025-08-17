@@ -1,18 +1,39 @@
 name: TSLhead
-version: '1.0'
+version: 1.0
 main: com.zvbj.TSL_head.TSL_Head
-api-version: '1.21'
-authors: [ Zvbj ]
-description: TSL服务器の插件 - 支持在线/离线玩家头颅获取
+api-version: 1.16
 folia-supported: true
+author: ZVBJ
+description: TSL服务器专用头颅插件，支持获取在线和离线玩家头颅，以及与CrazyCrates联动
+
 commands:
-  TSLhead:
-    description: 获取玩家头颅（支持离线玩家）
-    aliases: [thead]
-    usage: /<command> reload OR /<command> <命名> <玩家名> [接收玩家]
+  tslhead:
+    description: 获取玩家头颅
+    usage: /<command> <头颅类型> <玩家名> [接收玩家] 或 /<command> reload
     permission: tslhead.use
+    aliases: [thead]
+
+  tslheadcc:
+    description: 将头颅添加到CrazyCrates奖池
+    usage: /<command> <头颅类型> <玩家名> <奖池名> <权重> [层级]
+    permission: tslhead.crazycrates
+    aliases: [theadcc]
 
 permissions:
   tslhead.use:
-    description: 允许使用 TSLhead 命令
+    description: 使用基础头颅命令的权限
+    default: true
+
+  tslhead.crazycrates:
+    description: 使用CrazyCrates联动命令的权限
     default: op
+
+  tslhead.admin:
+    description: 管理员权限
+    default: op
+    children:
+      - tslhead.use
+      - tslhead.crazycrates
+
+depend: []
+softdepend: [CrazyCrates]

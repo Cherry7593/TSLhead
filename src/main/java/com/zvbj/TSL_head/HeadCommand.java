@@ -1,36 +1,44 @@
 package com.zvbj.TSL_head;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.*;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class HeadCommand implements CommandExecutor, TabCompleter {
     private final ConfigManager configManager;
+    private final TSL_Head plugin;
     private static final Pattern HEX_PATTERN = Pattern.compile("&#([A-Fa-f0-9]{6})");
 
-    public HeadCommand(ConfigManager configManager) {
+    public HeadCommand(ConfigManager configManager, TSL_Head plugin) {
         this.configManager = configManager;
+        this.plugin = plugin;
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+    public boolean onCommand(@NotNull CommandSender sender, @NotNull Command cmd, @NotNull String label, @NotNull String[] args) {
         if (!sender.hasPermission("tslhead.use")) {
-            sender.sendMessage(ChatColor.RED + "你没有权限执行此命令");
+            sender.sendMessage(Component.text("你没有权限执行此命令", NamedTextColor.RED));
             return true;
         }
 
         if (args.length == 1 && args[0].equalsIgnoreCase("reload")) {
             configManager.loadConfigs();
-            sender.sendMessage(ChatColor.GREEN + "TSLhead 配置已重新加载");
+            sender.sendMessage(Component.text("TSLhead 配置已重新加载", NamedTextColor.GREEN));
             return true;
         }
 
@@ -39,39 +47,107 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
             String key = args[0];
             SkullConfig sc = configManager.getConfig(key);
             if (sc == null) {
-                sender.sendMessage(ChatColor.RED + "未找到命名: " + key);
+                sender.sendMessage(Component.text("未找到命名: " + key, NamedTextColor.RED));
                 return true;
             }
 
-            // 使用OfflinePlayer来支持离线玩家
-            OfflinePlayer target = Bukkit.getOfflinePlayer(args[1]);
-            Player receiver;
-
             // 如果只有2个参数，接收者默认为命令发送者
+            final Player receiver;
             if (args.length == 2) {
                 if (!(sender instanceof Player)) {
-                    sender.sendMessage(ChatColor.RED + "控制台必须指定接收玩家");
+                    sender.sendMessage(Component.text("控制台必须指定接收玩家", NamedTextColor.RED));
                     return true;
                 }
                 receiver = (Player) sender;
             } else {
                 // 3个参数的情况，使用指定的接收者
                 receiver = Bukkit.getPlayerExact(args[2]);
+                if (receiver == null) {
+                    sender.sendMessage(Component.text("接收玩家 " + args[2] + " 不在线", NamedTextColor.RED));
+                    return true;
+                }
             }
 
-            // 检查目标玩家是否曾经进过服务器
-            if (!target.hasPlayedBefore() && !target.isOnline()) {
-                sender.sendMessage(ChatColor.RED + "玩家 " + args[1] + " 从未进入过服务器");
-                return true;
-            }
+            final String targetPlayerName = args[1];
 
-            // 检查接收者是否在线
-            if (receiver == null) {
-                sender.sendMessage(ChatColor.RED + "接收玩家 " + args[2] + " 不在线");
-                return true;
-            }
+            // Folia适配：使用异步任务处理头颅获取
+            CompletableFuture.supplyAsync(() -> {
+                // 使用OfflinePlayer来支持离线玩家
+                OfflinePlayer target = Bukkit.getOfflinePlayer(targetPlayerName);
 
-            // 创建头颅物品
+                // 检查目标玩家是否曾经进过服务器
+                if (!target.hasPlayedBefore() && !target.isOnline()) {
+                    // Folia环境下使用区域调度器，传统环境使用Bukkit调度器
+                    scheduleSync(receiver, () -> {
+                        sender.sendMessage(Component.text("玩家 " + targetPlayerName + " 从未进入过服务器", NamedTextColor.RED));
+                    });
+                    return null;
+                }
+
+                // 创建头颅物品
+                return createSkull(target, sc, targetPlayerName);
+            }).thenAccept(skull -> {
+                if (skull == null) {
+                    // 切换回主线程发送错误消息
+                    scheduleSync(receiver, () -> {
+                        sender.sendMessage(Component.text("创建头颅失败", NamedTextColor.RED));
+                    });
+                    return;
+                }
+
+                // 切换回主线程执行物品操作
+                scheduleSync(receiver, () -> {
+                    giveSkullToPlayer(sender, receiver, skull, targetPlayerName, key);
+                });
+            }).exceptionally(throwable -> {
+                plugin.getLogger().warning("异步处理头颅时发生错误: " + throwable.getMessage());
+                return null;
+            });
+
+            return true;
+        }
+
+        sender.sendMessage(Component.text("用法: /tslhead reload OR /tslhead <命名> <玩家名> [接收玩家]", NamedTextColor.YELLOW));
+        return true;
+    }
+
+    private void scheduleSync(Player player, Runnable task) {
+        if (isFolia()) {
+            player.getScheduler().run(plugin, (scheduledTask) -> task.run(), null);
+        } else {
+            Bukkit.getScheduler().runTask(plugin, task);
+        }
+    }
+
+    private void giveSkullToPlayer(CommandSender sender, Player receiver, ItemStack skull, String targetPlayerName, String key) {
+        // 尝试将头颅添加到玩家背包，如果背包满了则掉落到地上
+        HashMap<Integer, ItemStack> leftover = receiver.getInventory().addItem(skull);
+
+        // 检查是否有剩余物品（背包满了）
+        if (!leftover.isEmpty()) {
+            // 背包满了，将头颅掉落到玩家脚下
+            for (ItemStack item : leftover.values()) {
+                receiver.getWorld().dropItemNaturally(receiver.getLocation(), item);
+            }
+            sender.sendMessage(Component.text("玩家 " + receiver.getName() + " 的背包已满，头颅已掉落到其脚下", NamedTextColor.YELLOW));
+        }
+
+        OfflinePlayer target = Bukkit.getOfflinePlayer(targetPlayerName);
+        String targetStatus = target.isOnline() ? "在线" : "离线";
+        sender.sendMessage(Component.text("已将 " + targetPlayerName + " (" + targetStatus + ") 的头颅 (" + key + ") 给予 " + receiver.getName(), NamedTextColor.GREEN));
+    }
+
+    private boolean isFolia() {
+        try {
+            Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    private @Nullable ItemStack createSkull(OfflinePlayer target, SkullConfig sc, String fallbackName) {
+        try {
             ItemStack skull = new ItemStack(org.bukkit.Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
             if (meta != null) {
@@ -79,47 +155,33 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
                 meta.setOwningPlayer(target);
 
                 // 获取玩家名字（优先使用真实名字，如果离线则使用输入的名字）
-                String playerName = target.getName() != null ? target.getName() : args[1];
+                String playerName = target.getName() != null ? target.getName() : fallbackName;
 
-                String name = format(sc.getNameTemplate(), playerName);
-                meta.setDisplayName(name);
-                List<String> lore = sc.getLoreTemplate().stream()
-                        .map(line -> format(line, playerName))
-                        .collect(Collectors.toList());
-                meta.setLore(lore);
+                Component name = formatToComponent(sc.getNameTemplate(), playerName);
+                meta.displayName(name);
+
+                List<Component> lore = sc.getLoreTemplate().stream()
+                        .map(line -> formatToComponent(line, playerName))
+                        .toList();
+                meta.lore(lore);
                 skull.setItemMeta(meta);
             }
-
-            // 尝试将头颅添加到玩家背包，如果背包满了则掉落到地上
-            HashMap<Integer, ItemStack> leftover = receiver.getInventory().addItem(skull);
-
-            // 检查是否有剩余物品（背包满了）
-            if (!leftover.isEmpty()) {
-                // 背包满了，将头颅掉落到玩家脚下
-                for (ItemStack item : leftover.values()) {
-                    receiver.getWorld().dropItemNaturally(receiver.getLocation(), item);
-                }
-                sender.sendMessage(ChatColor.YELLOW + "玩家 " + receiver.getName() + " 的背包已满，头颅已掉落到其脚下");
-            }
-
-            String targetStatus = target.isOnline() ? "在线" : "离线";
-            sender.sendMessage(ChatColor.GREEN + "已将 " + args[1] + " (" + targetStatus + ") 的头颅 (" + key + ") 给予 " + receiver.getName());
-            return true;
+            return skull;
+        } catch (Exception e) {
+            plugin.getLogger().warning("创建头颅时发生错误: " + e.getMessage());
+            return null;
         }
-
-        sender.sendMessage(ChatColor.YELLOW + "用法: /thead reload OR /thead <命名> <玩家名> [接收玩家]");
-        return true;
     }
 
-    private String format(String template, String playerName) {
+    private Component formatToComponent(String template, String playerName) {
         String replaced = template.replace("{Player_name}", playerName);
         String withHex = applyHexColors(replaced);
-        return ChatColor.translateAlternateColorCodes('&', withHex);
+        return LegacyComponentSerializer.legacyAmpersand().deserialize(withHex);
     }
 
     private String applyHexColors(String input) {
         Matcher matcher = HEX_PATTERN.matcher(input);
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         while (matcher.find()) {
             String hex = matcher.group(1);
             String legacy = toLegacy(hex);
@@ -139,34 +201,21 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
     }
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
+    public @Nullable List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command cmd, @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            List<String> completions = new ArrayList<>(Arrays.asList("reload"));
+            List<String> completions = new ArrayList<>(List.of("reload"));
             completions.addAll(configManager.getKeys().stream()
                     .filter(k -> k.toLowerCase().startsWith(args[0].toLowerCase()))
-                    .collect(Collectors.toList()));
+                    .toList());
             return completions;
         }
 
         if (args.length == 2) {
-            // 为目标玩家提供补全：在线玩家 + 最近离线的玩家
-            List<String> suggestions = new ArrayList<>();
-
-            // 添加在线玩家
-            suggestions.addAll(Bukkit.getOnlinePlayers().stream()
+            // 只补全在线玩家，避免性能问题
+            return Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
                     .filter(n -> n.toLowerCase().startsWith(args[1].toLowerCase()))
-                    .collect(Collectors.toList()));
-
-            // 添加离线玩家（限制数量避免过多建议）
-            suggestions.addAll(Arrays.stream(Bukkit.getOfflinePlayers())
-                    .filter(p -> p.getName() != null && p.hasPlayedBefore())
-                    .map(OfflinePlayer::getName)
-                    .filter(n -> n.toLowerCase().startsWith(args[1].toLowerCase()))
-                    .limit(10) // 限制离线玩家建议数量
-                    .collect(Collectors.toList()));
-
-            return suggestions.stream().distinct().collect(Collectors.toList());
+                    .toList();
         }
 
         if (args.length == 3) {
@@ -174,9 +223,10 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
             return Bukkit.getOnlinePlayers().stream()
                     .map(Player::getName)
                     .filter(n -> n.toLowerCase().startsWith(args[2].toLowerCase()))
-                    .collect(Collectors.toList());
+                    .toList();
         }
 
         return Collections.emptyList();
     }
 }
+

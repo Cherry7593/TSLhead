@@ -9,9 +9,17 @@ public class TSL_Head extends JavaPlugin {
     public void onEnable() {
         saveDefaultConfig();
         configManager = new ConfigManager(this);
-        HeadCommand command = new HeadCommand(configManager);
-        getCommand("TSLhead").setExecutor(command);
-        getCommand("TSLhead").setTabCompleter(command);
+
+        // 注册头颅命令 - 修改为TSLhead
+        HeadCommand headCommand = new HeadCommand(configManager, this);
+        getCommand("tslhead").setExecutor(headCommand);
+        getCommand("tslhead").setTabCompleter(headCommand);
+
+        // 注册CrazyCrates联动命令 - 修改为tslheadcc
+        CrazyCratesCommand cratesCommand = new CrazyCratesCommand(configManager, this);
+        getCommand("tslheadcc").setExecutor(cratesCommand);
+        getCommand("tslheadcc").setTabCompleter(cratesCommand);
+
         getServer().getPluginManager().registerEvents(new AnvilListener(), this);
         getLogger().info("TSLhead 已启用");
     }
