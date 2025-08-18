@@ -2,7 +2,6 @@ package com.zvbj.TSL_head;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -15,13 +14,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class CrazyCratesCommand implements CommandExecutor, TabCompleter {
     private final ConfigManager configManager;
     private final TSL_Head plugin;
-    private static final Pattern HEX_PATTERN = Pattern.compile("&#([A-Fa-f0-9]{6})");
+    private final MiniMessage miniMessage = MiniMessage.miniMessage();
 
     public CrazyCratesCommand(@NotNull ConfigManager configManager, @NotNull TSL_Head plugin) {
         this.configManager = configManager;
@@ -78,47 +75,35 @@ public class CrazyCratesCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        // Folia适配：使用CompletableFuture异步处理头颅创建和添加
+        // Folia专用：使用CompletableFuture异步处理头颅创建和添加
         CompletableFuture.supplyAsync(() -> {
             // 检查目标玩家
             OfflinePlayer target = Bukkit.getOfflinePlayer(playerName);
-            if (!target.hasPlayedBefore() && !target.isOnline()) {
-                // 切换回主线程发送消息
-                scheduleSync(player, () -> {
-                    sender.sendMessage(Component.text("玩家 " + playerName + " 从未进入过服务器", NamedTextColor.RED));
-                });
-                return null;
-            }
+
+            // 移除原来的限制，允许获取正版离线玩家头颅
+            // 只有在明确知道是无效用户名时才拒绝（这里我们信任用户输入正确的正版用户名）
 
             // 创建头颅物品
             return createSkull(target, sc);
         }).thenAccept(skull -> {
             if (skull == null) {
                 // 切换回主线程发送错误消息
-                scheduleSync(player, () -> {
+                player.getScheduler().run(plugin, (scheduledTask) -> {
                     sender.sendMessage(Component.text("创建头颅失败", NamedTextColor.RED));
-                });
+                }, null);
                 return;
             }
 
             // 切换到主线程执行CrazyCrates命令
-            scheduleSync(player, () -> {
+            player.getScheduler().run(plugin, (scheduledTask) -> {
                 executeAddToCrate(sender, player, skull, skullType, playerName, crateName, weight, tier);
-            });
+            }, null);
         }).exceptionally(throwable -> {
             plugin.getLogger().warning("异步处理CrazyCrates命令时发生错误: " + throwable.getMessage());
             return null;
         });
 
         return true;
-    }
-
-    private void scheduleSync(Player player, Runnable task) {
-        if (isFolia()) {
-            player.getScheduler().run(plugin, (scheduledTask) -> task.run(), null);
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
-        }
     }
 
     private void executeAddToCrate(CommandSender sender, Player player, ItemStack skull, String skullType,
@@ -159,34 +144,27 @@ public class CrazyCratesCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    private boolean isFolia() {
-        try {
-            Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
-    }
-
     private @Nullable ItemStack createSkull(@NotNull OfflinePlayer target, @NotNull SkullConfig sc) {
         try {
             ItemStack skull = new ItemStack(org.bukkit.Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
 
             if (meta != null) {
-                // 使用UUID设置头颅所有者
-                meta.setOwningPlayer(target);
-
-                // 获取玩家名字 - 修复逻辑错误并声明为final
+                // 获取玩家名字 - 统一使用传入的玩家名
                 final String playerName;
                 if (target.getName() != null) {
                     playerName = target.getName();
                 } else {
-                    // 如果名字为null，使用UUID的字符串形式作为后备
+                    // 如果getName()返回null，使用UUID作为后备
                     playerName = target.getUniqueId().toString().substring(0, 8);
                 }
 
-                // 为CrazyCrates兼容性，使用MiniMessage格式
+                // 统一的头颅设置策略：始终使用玩家名
+                // 这样可以确保一致性，类似CMI插件的做法
+                meta.setOwner(playerName);
+                plugin.getLogger().info("CrazyCrates: 创建头颅: " + playerName + " (统一使用玩家名查询皮肤)");
+
+                // 为CrazyCrates兼容性，使用改进的MiniMessage格式
                 Component name = formatToCrazyCratesComponent(sc.getNameTemplate(), playerName);
                 meta.displayName(name);
 
@@ -202,6 +180,7 @@ public class CrazyCratesCommand implements CommandExecutor, TabCompleter {
             return skull;
         } catch (Exception e) {
             plugin.getLogger().warning("创建头颅时发生错误: " + e.getMessage());
+            e.printStackTrace(); // 添加详细错误信息
             return null;
         }
     }
@@ -209,20 +188,22 @@ public class CrazyCratesCommand implements CommandExecutor, TabCompleter {
     private Component formatToCrazyCratesComponent(String template, String playerName) {
         String replaced = template.replace("{Player_name}", playerName);
 
-        // 为CrazyCrates生成特殊的MiniMessage格式
-        String crazyFormat = convertToCrazyCratesFormat(replaced);
+        // 优化的颜色处理，专为CrazyCrates设计
+        String processed = processColorsForCrazyCrates(replaced);
 
         try {
-            return MiniMessage.miniMessage().deserialize(crazyFormat);
+            Component component = miniMessage.deserialize(processed);
+            // 强制禁用斜体装饰（针对lore的特殊处理）
+            return component.decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false);
         } catch (Exception e) {
-            // 如果MiniMessage解析失败，回退到传统格式
-            plugin.getLogger().warning("MiniMessage解析失败，回退到传统格式: " + e.getMessage());
-            return LegacyComponentSerializer.legacyAmpersand().deserialize(replaced);
+            // 如果MiniMessage解析失败，回退到简单组件
+            plugin.getLogger().warning("CrazyCrates MiniMessage解析失败: " + e.getMessage());
+            return Component.text(replaced).decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false);
         }
     }
 
-    private String convertToCrazyCratesFormat(String input) {
-        // 先处理十六进制颜色代码 &#RRGGBB -> <#RRGGBB>
+    private String processColorsForCrazyCrates(String input) {
+        // 将 &#RRGGBB 转换为 <#RRGGBB>
         String result = input.replaceAll("&#([A-Fa-f0-9]{6})", "<#$1>");
 
         // 处理传统颜色代码 &x -> <color>
@@ -251,83 +232,8 @@ public class CrazyCratesCommand implements CommandExecutor, TabCompleter {
         result = result.replace("&k", "<obfuscated>");
         result = result.replace("&r", "<reset>");
 
-        // 转换为CrazyCrates特有的格式
-        return generateCrazyCratesFormat(result);
-    }
-
-    private String generateCrazyCratesFormat(String input) {
-        // CrazyCrates期望的格式：<!italic><!underlined><!strikethrough><!bold><!obfuscated><content></!obfuscated></!bold></!strikethrough></!underlined></!italic><!italic>
-
-        StringBuilder sb = new StringBuilder();
-
-        // 添加开头的否定格式标记
-        sb.append(" <!italic><!underlined><!strikethrough><!bold><!obfuscated>");
-
-        // 分析输入内容，找到第一个颜色标记
-        if (input.contains("<gray>") || input.contains("<white>") || input.contains("<#")) {
-            // 找到第一个颜色标记的位置
-            int colorStart = findFirstColorTag(input);
-
-            if (colorStart != -1) {
-                // 提取颜色标记前的内容
-                String beforeColor = input.substring(0, colorStart);
-                String remaining = input.substring(colorStart);
-
-                // 添加前缀内容
-                sb.append(beforeColor);
-
-                // 处理颜色标记和后续内容
-                processColoredContent(sb, remaining);
-            } else {
-                // 没有找到颜色标记，直接添加
-                sb.append(input);
-            }
-        } else {
-            // 没有颜色标记，直接添加
-            sb.append(input);
-        }
-
-        return sb.toString();
-    }
-
-    private int findFirstColorTag(String input) {
-        // 查找第一个颜色标记的位置
-        String[] colorTags = {"<black>", "<dark_blue>", "<dark_green>", "<dark_aqua>",
-                             "<dark_red>", "<dark_purple>", "<gold>", "<gray>",
-                             "<dark_gray>", "<blue>", "<green>", "<aqua>",
-                             "<red>", "<light_purple>", "<yellow>", "<white>", "<#"};
-
-        int earliest = Integer.MAX_VALUE;
-        for (String tag : colorTags) {
-            int pos = input.indexOf(tag);
-            if (pos != -1 && pos < earliest) {
-                earliest = pos;
-            }
-        }
-
-        return earliest == Integer.MAX_VALUE ? -1 : earliest;
-    }
-
-    private void processColoredContent(StringBuilder sb, String content) {
-        // 处理包含颜色的内容
-        // 如果是灰色开始，按照CrazyCrates的模式处理
-        if (content.startsWith("<gray>")) {
-            // 找到</gray>的位置
-            int grayEnd = content.indexOf("</gray>");
-            if (grayEnd != -1) {
-                String grayContent = content.substring(0, grayEnd + 7); // 包含</gray>
-                String afterGray = content.substring(grayEnd + 7);
-
-                sb.append(grayContent);
-                sb.append("</!obfuscated></!bold></!strikethrough></!underlined></!italic><!italic>");
-                sb.append(afterGray);
-            } else {
-                sb.append(content);
-            }
-        } else {
-            // 其他颜色的处理
-            sb.append(content);
-        }
+        // 移除之前错误的italic:false标签
+        return result;
     }
 
     @Override

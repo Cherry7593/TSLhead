@@ -1,10 +1,10 @@
 name: TSLhead
-version: 1.0
+version: 1.0-Folia
 main: com.zvbj.TSL_head.TSL_Head
-api-version: 1.16
+api-version: 1.21
 folia-supported: true
 author: ZVBJ
-description: TSL服务器专用头颅插件，支持获取在线和离线玩家头颅，以及与CrazyCrates联动
+description: TSL服务器专用头颅插件 - Folia专版，支持16进制颜色和区域调度器
 
 commands:
   tslhead:

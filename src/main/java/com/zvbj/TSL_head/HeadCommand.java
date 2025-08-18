@@ -2,8 +2,8 @@ package com.zvbj.TSL_head;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.*;
@@ -17,12 +17,12 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 public class HeadCommand implements CommandExecutor, TabCompleter {
     private final ConfigManager configManager;
     private final TSL_Head plugin;
     private static final Pattern HEX_PATTERN = Pattern.compile("&#([A-Fa-f0-9]{6})");
+    private final MiniMessage miniMessage = MiniMessage.miniMessage();
 
     public HeadCommand(ConfigManager configManager, TSL_Head plugin) {
         this.configManager = configManager;
@@ -70,35 +70,26 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
 
             final String targetPlayerName = args[1];
 
-            // Folia适配：使用异步任务处理头颅获取
+            // Folia专用：使用异步任务处理头颅获取
             CompletableFuture.supplyAsync(() -> {
-                // 使用OfflinePlayer来支持离线玩家
                 OfflinePlayer target = Bukkit.getOfflinePlayer(targetPlayerName);
 
-                // 检查目标玩家是否曾经进过服务器
-                if (!target.hasPlayedBefore() && !target.isOnline()) {
-                    // Folia环境下使用区域调度器，传统环境使用Bukkit调度器
-                    scheduleSync(receiver, () -> {
-                        sender.sendMessage(Component.text("玩家 " + targetPlayerName + " 从未进入过服务器", NamedTextColor.RED));
-                    });
-                    return null;
-                }
+                // 移除原来的限制，允许获取正版离线玩家头颅
+                // 只有在明确知道是无效用户名时才拒绝（这里我们信任用户输入正确的正版用户名）
 
-                // 创建头颅物品
                 return createSkull(target, sc, targetPlayerName);
             }).thenAccept(skull -> {
                 if (skull == null) {
-                    // 切换回主线程发送错误消息
-                    scheduleSync(receiver, () -> {
+                    receiver.getScheduler().run(plugin, (scheduledTask) -> {
                         sender.sendMessage(Component.text("创建头颅失败", NamedTextColor.RED));
-                    });
+                    }, null);
                     return;
                 }
 
                 // 切换回主线程执行物品操作
-                scheduleSync(receiver, () -> {
+                receiver.getScheduler().run(plugin, (scheduledTask) -> {
                     giveSkullToPlayer(sender, receiver, skull, targetPlayerName, key);
-                });
+                }, null);
             }).exceptionally(throwable -> {
                 plugin.getLogger().warning("异步处理头颅时发生错误: " + throwable.getMessage());
                 return null;
@@ -109,14 +100,6 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
 
         sender.sendMessage(Component.text("用法: /tslhead reload OR /tslhead <命名> <玩家名> [接收玩家]", NamedTextColor.YELLOW));
         return true;
-    }
-
-    private void scheduleSync(Player player, Runnable task) {
-        if (isFolia()) {
-            player.getScheduler().run(plugin, (scheduledTask) -> task.run(), null);
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
-        }
     }
 
     private void giveSkullToPlayer(CommandSender sender, Player receiver, ItemStack skull, String targetPlayerName, String key) {
@@ -137,25 +120,19 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(Component.text("已将 " + targetPlayerName + " (" + targetStatus + ") 的头颅 (" + key + ") 给予 " + receiver.getName(), NamedTextColor.GREEN));
     }
 
-    private boolean isFolia() {
-        try {
-            Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
-            return true;
-        } catch (ClassNotFoundException e) {
-            return false;
-        }
-    }
-
     private @Nullable ItemStack createSkull(OfflinePlayer target, SkullConfig sc, String fallbackName) {
         try {
             ItemStack skull = new ItemStack(org.bukkit.Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) skull.getItemMeta();
             if (meta != null) {
-                // 使用UUID设置头颅所有者，这样即使玩家离线也能正确显示皮肤
-                meta.setOwningPlayer(target);
+                // 统一使用输入的玩家名，不区分在线离线状态
+                // 这样可以确保一致性，类似CMI插件的做法
+                String playerName = fallbackName;
 
-                // 获取玩家名字（优先使用真实名字，如果离线则使用输入的名字）
-                String playerName = target.getName() != null ? target.getName() : fallbackName;
+                // 统一的头颅设置策略：始终使用玩家名
+                // 这样Minecraft客户端会自动查询Mojang API获取正确的皮肤
+                meta.setOwner(fallbackName);
+                plugin.getLogger().info("创建头颅: " + fallbackName + " (统一使用玩家名查询皮肤)");
 
                 Component name = formatToComponent(sc.getNameTemplate(), playerName);
                 meta.displayName(name);
@@ -169,35 +146,68 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
             return skull;
         } catch (Exception e) {
             plugin.getLogger().warning("创建头颅时发生错误: " + e.getMessage());
+            e.printStackTrace(); // 添加详细错误信息
             return null;
         }
     }
 
     private Component formatToComponent(String template, String playerName) {
         String replaced = template.replace("{Player_name}", playerName);
-        String withHex = applyHexColors(replaced);
-        return LegacyComponentSerializer.legacyAmpersand().deserialize(withHex);
+
+        // 修复后的16进制颜色处理
+        String processed = processHexColors(replaced);
+
+        try {
+            // 优先使用MiniMessage解析（支持现代颜色格式）
+            Component component = miniMessage.deserialize(processed);
+            // 强制禁用斜体装饰（针对lore��特殊处理）
+            return component.decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false);
+        } catch (Exception e) {
+            // 如果MiniMessage解析失败，尝试使用传统方法
+            plugin.getLogger().warning("MiniMessage解析失败，尝试传统方法: " + e.getMessage());
+            try {
+                // 创建无斜体的组件
+                return Component.text(replaced).decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false);
+            } catch (Exception ex) {
+                // 最后的fallback
+                plugin.getLogger().warning("颜色处理完全失败，使用纯文本: " + ex.getMessage());
+                return Component.text(playerName).decoration(net.kyori.adventure.text.format.TextDecoration.ITALIC, false);
+            }
+        }
     }
 
-    private String applyHexColors(String input) {
-        Matcher matcher = HEX_PATTERN.matcher(input);
-        StringBuilder sb = new StringBuilder();
-        while (matcher.find()) {
-            String hex = matcher.group(1);
-            String legacy = toLegacy(hex);
-            matcher.appendReplacement(sb, legacy);
-        }
-        matcher.appendTail(sb);
-        return sb.toString();
-    }
+    private String processHexColors(String input) {
+        // 将 &#RRGGBB 转换为 <#RRGGBB> (MiniMessage格式)
+        String result = input.replaceAll("&#([A-Fa-f0-9]{6})", "<#$1>");
 
-    private String toLegacy(String hex) {
-        char[] chars = hex.toCharArray();
-        StringBuilder sb = new StringBuilder("§x");
-        for (char c : chars) {
-            sb.append('§').append(c);
-        }
-        return sb.toString();
+        // 处理传统颜色代码 &x -> <color>
+        result = result.replace("&0", "<black>");
+        result = result.replace("&1", "<dark_blue>");
+        result = result.replace("&2", "<dark_green>");
+        result = result.replace("&3", "<dark_aqua>");
+        result = result.replace("&4", "<dark_red>");
+        result = result.replace("&5", "<dark_purple>");
+        result = result.replace("&6", "<gold>");
+        result = result.replace("&7", "<gray>");
+        result = result.replace("&8", "<dark_gray>");
+        result = result.replace("&9", "<blue>");
+        result = result.replace("&a", "<green>");
+        result = result.replace("&b", "<aqua>");
+        result = result.replace("&c", "<red>");
+        result = result.replace("&d", "<light_purple>");
+        result = result.replace("&e", "<yellow>");
+        result = result.replace("&f", "<white>");
+
+        // 处理格式代码
+        result = result.replace("&l", "<bold>");
+        result = result.replace("&m", "<strikethrough>");
+        result = result.replace("&n", "<underlined>");
+        result = result.replace("&o", "<italic>");
+        result = result.replace("&k", "<obfuscated>");
+        result = result.replace("&r", "<reset>");
+
+        // 移除之前错误的italic:false标签
+        return result;
     }
 
     @Override
@@ -229,4 +239,3 @@ public class HeadCommand implements CommandExecutor, TabCompleter {
         return Collections.emptyList();
     }
 }
-
